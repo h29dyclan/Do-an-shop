@@ -9,12 +9,19 @@ const __dirname = path.dirname(__filename);
 // DATABASE CONNECTION
 // ========================================
 
-const db = new Database(
-  path.join(__dirname, "techshop.db")
-);
+// Ưu tiên sử dụng DB_PATH từ biến môi trường.
+// Nếu không có DB_PATH, sử dụng database local.
+const dbPath = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.join(__dirname, "techshop.db");
 
+const db = new Database(dbPath);
+
+// Cấu hình SQLite
 db.pragma("foreign_keys = ON");
 db.pragma("journal_mode = WAL");
+
+console.log(`SQLite database: ${dbPath}`);
 
 // ========================================
 // CREATE TABLES
@@ -24,6 +31,18 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE
+  );
+
+  CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    price INTEGER NOT NULL CHECK (price >= 0),
+    image TEXT DEFAULT '',
+    stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    category_id INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
   );
 
   CREATE TABLE IF NOT EXISTS products (
@@ -92,14 +111,11 @@ if (!hasRoleColumn) {
     CHECK (role IN ('admin', 'customer'))
   `);
 
-  console.log(
-    "Đã bổ sung cột role cho bảng users."
-  );
+  console.log("Đã bổ sung cột role cho bảng users.");
 }
 
 // ========================================
-// SEED INITIAL PRODUCTS
-// Tạo 3 sản phẩm nổi bật nếu database chưa có
+// PREPARE SEED STATEMENTS
 // ========================================
 
 const insertCategory = db.prepare(`
@@ -119,6 +135,17 @@ const insertProduct = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?)
 `);
 
+const findProductByName = db.prepare(`
+  SELECT id
+  FROM products
+  WHERE name = ?
+`);
+
+// ========================================
+// SEED INITIAL PRODUCTS
+// Tạo sản phẩm mẫu nếu chưa tồn tại
+// ========================================
+
 const seedProducts = db.transaction(() => {
   // Tạo danh mục Phụ kiện nếu chưa có
   insertCategory.run("Phụ kiện");
@@ -137,32 +164,40 @@ const seedProducts = db.transaction(() => {
 
   // Nếu database chưa có sản phẩm thì tạo 3 sản phẩm nổi bật
   if (productCount === 0) {
-    insertProduct.run(
-      "Tai nghe Bluetooth",
-      "Tai nghe không dây tiện dụng.",
-      590000,
-      "https://placehold.co/400x300?text=Headphones",
-      20,
-      category.id
-    );
+    const featuredProducts = [
+      {
+        name: "Tai nghe Bluetooth",
+        description: "Tai nghe không dây tiện dụng.",
+        price: 590000,
+        image: "https://placehold.co/400x300?text=Headphones",
+        stock: 20,
+      },
+      {
+        name: "Bàn phím cơ",
+        description: "Bàn phím cơ dành cho làm việc và chơi game.",
+        price: 890000,
+        image: "https://placehold.co/400x300?text=Keyboard",
+        stock: 15,
+      },
+      {
+        name: "Chuột không dây",
+        description: "Chuột không dây nhỏ gọn.",
+        price: 350000,
+        image: "https://placehold.co/400x300?text=Mouse",
+        stock: 30,
+      },
+    ];
 
-    insertProduct.run(
-      "Bàn phím cơ",
-      "Bàn phím cơ dành cho làm việc và chơi game.",
-      890000,
-      "https://placehold.co/400x300?text=Keyboard",
-      15,
-      category.id
-    );
-
-    insertProduct.run(
-      "Chuột không dây",
-      "Chuột không dây nhỏ gọn.",
-      350000,
-      "https://placehold.co/400x300?text=Mouse",
-      30,
-      category.id
-    );
+    for (const product of featuredProducts) {
+      insertProduct.run(
+        product.name,
+        product.description,
+        product.price,
+        product.image,
+        product.stock,
+        category.id
+      );
+    }
 
     console.log("Đã tạo 3 sản phẩm nổi bật mẫu.");
   }
@@ -175,46 +210,33 @@ const seedProducts = db.transaction(() => {
   const additionalProducts = [
     {
       name: "Loa Bluetooth mini",
-      description:
-        "Loa Bluetooth mini nhỏ gọn, âm thanh tiện dụng.",
+      description: "Loa Bluetooth mini nhỏ gọn, âm thanh tiện dụng.",
       price: 350000,
-      image:
-        "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSo2RJnRHdjTfHV4IWQBiH9Tf4-r6DCffsPcO_ybRCrqs76T8Fm8nGHOpII&s=10",
+      image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSo2RJnRHdjTfHV4IWQBiH9Tf4-r6DCffsPcO_ybRCrqs76T8Fm8nGHOpII&s=10",
       stock: 20,
     },
     {
       name: "Củ sạc nhanh USB-C",
-      description:
-        "Củ sạc nhanh USB-C nhỏ gọn, tiện lợi.",
+      description: "Củ sạc nhanh USB-C nhỏ gọn, tiện lợi.",
       price: 250000,
-      image:
-        "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSsK7yzC8hbOXdZD2XP_x69urG_MkoMMdUcvjr2hL5C62mgWlgarITCOgY&s=10",
+      image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSsK7yzC8hbOXdZD2XP_x69urG_MkoMMdUcvjr2hL5C62mgWlgarITCOgY&s=10",
       stock: 25,
     },
     {
       name: "Giá đỡ điện thoại",
-      description:
-        "Giá đỡ điện thoại để bàn, thuận tiện khi sử dụng.",
+      description: "Giá đỡ điện thoại để bàn, thuận tiện khi sử dụng.",
       price: 120000,
-      image:
-        "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQSL29DNT0kC4AF0KvTVIHZJW_32wQtnmuQA1z5R0brvMQKE_9k5uqhMIEK&s=10",
+      image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQSL29DNT0kC4AF0KvTVIHZJW_32wQtnmuQA1z5R0brvMQKE_9k5uqhMIEK&s=10",
       stock: 30,
     },
   ];
 
-  // Tìm sản phẩm theo tên để tránh tạo trùng
-  const findProductByName = db.prepare(`
-    SELECT id
-    FROM products
-    WHERE name = ?
-  `);
-
+  // Chỉ thêm sản phẩm nếu chưa tồn tại
   for (const product of additionalProducts) {
     const existingProduct = findProductByName.get(
       product.name
     );
 
-    // Chỉ thêm nếu sản phẩm chưa tồn tại
     if (!existingProduct) {
       insertProduct.run(
         product.name,
@@ -225,18 +247,17 @@ const seedProducts = db.transaction(() => {
         category.id
       );
 
-      console.log(
-        `Đã thêm sản phẩm: ${product.name}`
-      );
+      console.log(`Đã thêm sản phẩm: ${product.name}`);
     }
   }
 
-  console.log(
-    "Đã kiểm tra và bổ sung sản phẩm thường."
-  );
+  console.log("Đã kiểm tra và bổ sung sản phẩm thường.");
 });
 
-// Chạy tạo dữ liệu mẫu
+// ========================================
+// RUN SEED
+// ========================================
+
 seedProducts();
 
 // ========================================

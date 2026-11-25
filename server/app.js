@@ -10,23 +10,54 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
   throw new Error(
-    "Thiếu JWT_SECRET. Hãy khai báo JWT_SECRET trong file .env."
+    "Thiếu JWT_SECRET. Hãy khai báo JWT_SECRET trong biến môi trường."
   );
 }
 
-app.use(cors());
+// ========================================
+// CORS CONFIGURATION
+// ========================================
+
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(",").map((url) => url.trim())
+  : ["http://localhost:5173"];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error("Origin không được phép truy cập API.")
+      );
+    },
+  })
+);
+
 app.use(express.json({ limit: "1mb" }));
 
 // ========================================
 // CẤU HÌNH TÀI KHOẢN ADMIN
 // ========================================
 
-const ADMIN_EMAIL = "adminduy@mail.com";
-const ADMIN_PASSWORD = "DDQH123@";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 async function ensureAdminAccount() {
-  const email = ADMIN_EMAIL.trim().toLowerCase();
-  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    console.log(
+      "Chưa cấu hình ADMIN_EMAIL hoặc ADMIN_PASSWORD. Bỏ qua tạo Admin."
+    );
+    return;
+  }
+
+  if (ADMIN_PASSWORD.length < 8 || ADMIN_PASSWORD.length > 72) {
+    throw new Error(
+      "ADMIN_PASSWORD phải dài từ 8 đến 72 ký tự."
+    );
+  }
 
   const existingAdmin = db
     .prepare(`
@@ -34,31 +65,26 @@ async function ensureAdminAccount() {
       FROM users
       WHERE lower(email) = ?
     `)
-    .get(email);
+    .get(ADMIN_EMAIL);
 
-  if (!existingAdmin) {
-    db.prepare(`
-      INSERT INTO users (
-        full_name,
-        email,
-        password_hash,
-        role
-      )
-      VALUES (?, ?, ?, 'admin')
-    `).run("Admin Duy", email, passwordHash);
-
-    console.log("Đã tạo tài khoản Admin:", email);
-  } else {
-    db.prepare(`
-      UPDATE users
-      SET full_name = ?,
-          password_hash = ?,
-          role = 'admin'
-      WHERE id = ?
-    `).run("Admin Duy", passwordHash, existingAdmin.id);
-
-    console.log("Đã cập nhật tài khoản Admin:", email);
+  if (existingAdmin) {
+    console.log("Tài khoản Admin đã tồn tại:", ADMIN_EMAIL);
+    return;
   }
+
+  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+
+  db.prepare(`
+    INSERT INTO users (
+      full_name,
+      email,
+      password_hash,
+      role
+    )
+    VALUES (?, ?, ?, 'admin')
+  `).run("Admin Duy", ADMIN_EMAIL, passwordHash);
+
+  console.log("Đã tạo tài khoản Admin:", ADMIN_EMAIL);
 }
 
 // ========================================
@@ -188,7 +214,7 @@ app.post("/api/auth/register", async (req, res) => {
     });
   }
 
-  if (email === ADMIN_EMAIL.toLowerCase()) {
+  if (ADMIN_EMAIL && email === ADMIN_EMAIL) {
     return res.status(409).json({
       message: "Email này dành riêng cho tài khoản Admin.",
     });
@@ -331,19 +357,28 @@ app.get("/api/auth/me", authenticateToken, (req, res) => {
 });
 
 // ========================================
-// KIỂM TRA API
+// KIỂM TRA API VÀ HEALTH CHECK
 // ========================================
 
 app.get("/", (req, res) => {
-  res.json({
+  return res.json({
     message: "TechShop API đang hoạt động!",
   });
 });
+
+app.get("/health", (req, res) => {
+  return res.status(200).json({
+    status: "ok",
+    message: "TechShop API đang hoạt động.",
+  });
+});
+
 // ========================================
 // QUẢN LÝ SẢN PHẨM
 // ========================================
 
 // GET: Danh sách sản phẩm - Công khai
+
 app.get("/api/products", (req, res) => {
   try {
     const products = db
@@ -374,6 +409,7 @@ app.get("/api/products", (req, res) => {
 });
 
 // GET: Chi tiết sản phẩm - Công khai
+
 app.get("/api/products/:id", (req, res) => {
   const id = Number(req.params.id);
 
@@ -418,6 +454,7 @@ app.get("/api/products/:id", (req, res) => {
 });
 
 // POST: Thêm sản phẩm - Chỉ Admin
+
 app.post(
   "/api/products",
   authenticateToken,
@@ -520,6 +557,7 @@ app.post(
 );
 
 // PUT: Cập nhật sản phẩm - Chỉ Admin
+
 app.put(
   "/api/products/:id",
   authenticateToken,
@@ -639,6 +677,7 @@ app.put(
 );
 
 // DELETE: Xóa sản phẩm - Chỉ Admin
+
 app.delete(
   "/api/products/:id",
   authenticateToken,
@@ -676,6 +715,7 @@ app.delete(
     }
   }
 );
+
 // ========================================
 // TẠO ĐƠN HÀNG - KHÁCH HÀNG ĐÃ ĐĂNG NHẬP
 // POST /api/orders
@@ -720,6 +760,7 @@ app.post("/api/orders", authenticateToken, (req, res) => {
       const quantities = new Map();
 
       // Gộp các sản phẩm trùng ID.
+
       for (const item of items) {
         const productId = Number(item.product_id);
         const quantity = Number(item.quantity);
@@ -731,6 +772,7 @@ app.post("/api/orders", authenticateToken, (req, res) => {
       }
 
       // Kiểm tra sản phẩm và tồn kho từ database.
+
       for (const [productId, quantity] of quantities.entries()) {
         const product = db
           .prepare(`
@@ -744,6 +786,7 @@ app.post("/api/orders", authenticateToken, (req, res) => {
           const error = new Error(
             `Không tìm thấy sản phẩm ID ${productId}.`
           );
+
           error.statusCode = 400;
           throw error;
         }
@@ -752,6 +795,7 @@ app.post("/api/orders", authenticateToken, (req, res) => {
           const error = new Error(
             `Sản phẩm "${product.name}" không đủ tồn kho.`
           );
+
           error.statusCode = 400;
           throw error;
         }
@@ -767,6 +811,7 @@ app.post("/api/orders", authenticateToken, (req, res) => {
       }
 
       // user_id lấy từ tài khoản đã xác thực.
+
       const orderResult = db
         .prepare(`
           INSERT INTO orders (
@@ -825,6 +870,7 @@ app.post("/api/orders", authenticateToken, (req, res) => {
           const error = new Error(
             `Không thể cập nhật tồn kho sản phẩm "${item.product_name}".`
           );
+
           error.statusCode = 400;
           throw error;
         }
@@ -963,6 +1009,7 @@ app.get(
     }
   }
 );
+
 // ========================================
 // ADMIN: CẬP NHẬT TRẠNG THÁI ĐƠN HÀNG
 // PUT /api/orders/:id/status
@@ -1015,6 +1062,7 @@ app.put(
           const error = new Error(
             "Đơn hàng đã hủy không thể chuyển sang trạng thái khác."
           );
+
           error.statusCode = 400;
           throw error;
         }
@@ -1023,11 +1071,13 @@ app.put(
           const error = new Error(
             "Đơn hàng đã hoàn thành không thể hủy."
           );
+
           error.statusCode = 400;
           throw error;
         }
 
         // Chỉ hoàn tồn kho khi chuyển từ trạng thái chưa hủy sang hủy.
+
         if (status === "cancelled" && order.status !== "cancelled") {
           const items = db
             .prepare(`
@@ -1078,6 +1128,7 @@ app.put(
     }
   }
 );
+
 // ========================================
 // KHÁCH HÀNG: DANH SÁCH ĐƠN HÀNG CỦA TÔI
 // GET /api/my-orders
@@ -1177,11 +1228,13 @@ app.get("/api/my-orders/:id", authenticateToken, (req, res) => {
     });
   }
 });
+
 // ========================================
 // DASHBOARD - CHỈ ADMIN
 // ========================================
 
 // GET: Thống kê tổng quan
+
 app.get(
   "/api/dashboard/summary",
   authenticateToken,
@@ -1260,6 +1313,7 @@ app.get(
 );
 
 // GET: Doanh thu theo ngày trong 7 ngày gần nhất
+
 app.get(
   "/api/dashboard/revenue",
   authenticateToken,
@@ -1277,6 +1331,7 @@ app.get(
             FROM days
             WHERE n < 6
           )
+
           SELECT
             days.day AS date,
             COALESCE(
@@ -1309,6 +1364,7 @@ app.get(
 );
 
 // GET: Top 5 sản phẩm bán chạy
+
 app.get(
   "/api/dashboard/top-products",
   authenticateToken,
@@ -1350,7 +1406,8 @@ async function startServer() {
     await ensureAdminAccount();
 
     app.listen(PORT, () => {
-      console.log(`Backend chạy tại http://localhost:${PORT}`);
+      console.log(`Backend đang chạy tại port ${PORT}`);
+      console.log(`Health check: http://localhost:${PORT}/health`);
     });
   } catch (error) {
     console.error("Không thể khởi động server:", error);
